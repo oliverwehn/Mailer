@@ -1,0 +1,288 @@
+<?php
+
+
+class Mailer extends WireData implements Module, ConfigurableModule {
+
+	var $content_types = array(
+		'text/plain',
+		'text/html'
+		);
+	var $to = array(),
+		$from = null,
+		$subject = null,
+		$body = array(),
+		$keys = array(),
+		$values = array();
+
+	/**
+	 * getModuleInfo is a module required by all modules to tell ProcessWire about them
+	 *
+	 * @return array
+	 *
+	 */
+	public static function getModuleInfo() {
+
+		return array(
+			'title' => 'Mailer', 
+			'version' => 100, 
+			'summary' => 'Module to send mails.',
+			'href' => 'http://www.processwire.com',
+			'singular' => true, 
+			'autoload' => true, 
+			);
+	}
+
+	/**
+	 * Initialize the module
+	 */
+	public function init() {
+		$this->set('from', $this->default_from);
+	}
+	
+	/**
+	 * Set parameters for mailing
+	 */
+	public function set($key, $value) {
+		$key = strtolower($key);
+		switch($key) {
+			case 'to': {
+				return $this->_setTo($value);
+				break;
+			}
+			case 'from': {
+				return $this->_setFrom($value);
+				break;
+			}
+			case 'subject': {
+				return $this->_setSubject($value);
+				break;
+			}
+			case 'body': {
+				return $this->_setBody($value);
+				break;
+			}
+			case 'values': {
+				return $this->_setValues($value);
+				break;
+			}
+			default: {
+				return false;
+			}
+		}
+	}
+	
+	/**
+	 * Set individual recipients
+	 */
+	private function _setTo($recipient, $personal_values=null) {
+		if(is_array($recipient)) {
+			$errors = array();
+			foreach($recipient as $r) {
+				if(is_array($r) && count($r) == 2) { 
+					if(!$this->_setTo($r[0], $r[1])) {
+						$errors[] = $r[0];
+					}
+				} elseif(is_string($r)) {
+					if(!$this->_setTo($r)) {
+						$errors[] = $r;
+					}
+				}
+			}
+			return count($errors)?$errors:true;
+		} else {
+			if($this->valid($recipient)) {
+				$this->to[] = array(
+					'address' => $recipient,
+					'values' => is_array($personal_values)?$personal_values:array()
+					);
+				return true;
+			} else {
+				return false;
+			}
+		}
+	}
+	
+	/**
+	 * Set sender's address
+	 */
+	private function _setFrom($address) {
+		if($this->valid($address)) {
+			$this->from = $address;
+			return true;
+		} else {
+			return false;
+		}
+	}
+	
+	/**
+	 * set subject
+	 */
+	private function _setSubject($text) {
+		if(is_string($text)) {
+			$this->subject = $text;
+			$keys = $this->_getKeys($text);
+			foreach($keys as $key) {
+				if(!in_array($key, $this->keys)) {
+					$this->keys[] = $key;
+				}
+			}
+			return true;
+		} else {
+			return false;
+		}
+	}
+
+	/**
+	 * set body
+	 */
+	private function _setBody($text, $content_type = 'text/plain') {
+		if(is_string($text)) {
+			$keys = $this->_getKeys($text);
+			foreach($keys as $key) {
+				if(!in_array($key, $this->keys)) {
+					$this->keys[] = $key;
+				}
+			}
+			if(!in_array($content_type, $this->content_types)) {
+				$content_type = $this->content_types[0];
+			} 
+			$this->body[$content_type] = $text;
+			return true;
+		} else {
+			return false;
+		}
+	}
+	
+	/**
+	 * set text values
+	 */
+	private function _setValues($values) {
+		if(is_array($values)) {
+			$added = 0;
+			foreach($values as $key=>$value) {
+				if(is_scalar($key) && is_scalar($value)) {
+					$this->values[$key] = $value;
+					$added++;
+				}
+			}
+			return $added;
+		} else {
+			return false;
+		}
+	}
+	
+	/**
+	 * get text keys
+	 */
+	private function _getKeys($text) {
+		if(preg_match_all("#\{\{([a-z0-9_\-]+)\}\}#i", $text, $matches)) {
+			$keys = array();
+			foreach($matches[1] as $m) {
+				$keys[] = $m;
+			}
+			return $keys;
+		} else {
+			return array();
+		}
+	}
+	
+	/**
+	 * Combine general values with individual values
+	 */
+	private function _getPersonalValues($values) {
+		if(is_array($values)) {
+			$return = $this->values;
+			foreach($values as $key=>$value) {
+				if(array_key_exists($key, $return)) {
+					$return[$key] = $value;
+				}
+			}
+			return $return;
+		} else {
+			return $this->values;
+		}
+	}
+	
+	/**
+	 * Personalize text
+	 */
+	private function _personalize($text, $values) {
+		if(is_array($values)) {
+			$patterns = array();
+			$replacements = array();
+			foreach($this->keys as $key) {
+				$patterns[] = "{{".$key."}}";
+				$replacements[] = array_key_exists($key, $values)?$values[$key]:'';
+			}
+			return str_replace($patterns, $replacements, $text);
+		} else {
+			return false;
+		}
+	}
+	
+	/**
+	 * check if address is valid
+	 */
+	public function valid($address) {
+		if(!preg_match("#^[a-z0-9_\+-]+(\.[a-z0-9_\+-]+)*@[a-z0-9-]+(\.[a-z0-9-]+)*\.([a-z]{2,4})$#", $address)) {
+			if(!preg_match("#^[a-z0-9,!\#\$%&'\*\+/=\?\^_`\{\|}~-]+(\.[a-z0-9,!\#\$%&'\*\+/=\?\^_`\{\|}~-]+)*@[a-z0-9-]+(\.[a-z0-9-]+)*\.([a-z]{2,})$#", $address)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Send E-Mail
+	 *
+	 */
+	public function ___send($content_type = 'text/plain') {
+		if(is_array($this->to)) {
+			if(in_array($content_type, $this->content_types) && array_key_exists($content_type, $this->body)) {
+				$sent = 0;
+				// build an email for every recipient
+				foreach($this->to as $recipient) {
+					$values = $this->_getPersonalValues($recipient['values']);
+					$to = $recipient['address'];
+					// get personalized subject
+					$subject = $this->_personalize($this->subject, $values);
+					// get personalized body
+					$body = $this->_personalize($this->body[$content_type], $values);
+					// header
+					$header = 'From: '.$this->from."\n";
+					$header .= 'MIME-Version: 1.0' . "\r\n" . 'Content-type: '.$content_type.'; charset=UTF-8' . "\r\n";
+					if(mail($to, '=?UTF-8?B?'.base64_encode($subject).'?=', $body, $header)) {
+						$sent++;
+					}
+				}
+				return $sent;
+			} else {
+				echo $this->_('Error: Content-Type unknown or no body copy for this content-type available!');
+				return false;
+			}
+		} else {
+			echo $this->_('Error: List of recipients isnÕt an array!');
+			return false;
+		}		
+	}
+
+	public static function getModuleConfigInputfields(array $data) {
+        $modules = wire('modules');        
+        $fields = new InputfieldWrapper();
+        // templates
+        /*
+        $field = new Field();
+		$field->type = $modules->get('InputfieldSelect');
+		$field->name = 'templates';
+		$field->label = __('Mail templates');
+		 * 
+		 */
+		$field = $modules->get('InputfieldEmail');
+		$field->name = 'default_from';
+		$field->label = __('From');
+		$field->value = $data['default_from'];
+		$fields->add($field);
+        return $fields; 
+    }
+	
+}
